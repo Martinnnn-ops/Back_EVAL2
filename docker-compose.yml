@@ -1,0 +1,151 @@
+# ============================================================
+# docker-compose.yml — Backend + Base de datos
+# ============================================================
+# Define DOS contenedores que trabajan juntos:
+#   1. database  → MySQL 8.0
+#   2. backend   → API Node.js/Express
+# Más una RED privada y un VOLUMEN persistente.
+#
+# Funciona tanto en LOCAL como en producción (EC2):
+#   • Local: docker compose up -d --build   (construye con el Dockerfile)
+#   • EC2 :  docker compose pull && up -d   (descarga desde Docker Hub)
+#
+# Comandos útiles:
+#   docker compose up -d --build      → levantar (construye si hace falta)
+#   docker compose down               → detener y borrar contenedores
+#   docker compose ps                 → ver estado
+#   docker compose logs -f backend    → ver logs en vivo
+# ============================================================
+#
+# NOTA: el atributo "version:" se quitó porque es obsoleto en Compose v2
+
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # SERVICIO 1: Base de datos MySQL 8.0
+  # ──────────────────────────────────────────────────────────
+  database:
+    image: mysql:8.0                  # Imagen oficial de MySQL
+    container_name: devops_mysql      # Nombre fijo (más fácil para docker exec)
+    restart: unless-stopped           # Reinicia si crashea (a menos que tú lo pares)
+
+    # Variables que MySQL usa para inicializarse la PRIMERA vez:
+    #   • Crea la BD MYSQL_DATABASE
+    #   • Crea el usuario MYSQL_USER con MYSQL_PASSWORD
+    #   • Establece la contraseña root
+    # ${VAR:-default} → usa VAR del .env, o "default" si no está definida
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-CAMBIAR_EN_LOCAL}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-proyecto_db}
+      MYSQL_USER: ${MYSQL_USER:-app_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-CAMBIAR_EN_LOCAL}
+
+    # Publicar el puerto 3306 al host (útil para conectarte con DBeaver/MySQL Workbench)
+    # En producción podrías quitarlo para que solo sea accesible internamente
+    ports:
+      - "3306:3306"
+
+    volumes:
+      # Named volume → Docker gestiona dónde guardar los datos.
+      # CLAVE: gracias a esto los datos sobreviven a "docker compose down".
+      - mysql_data:/var/lib/mysql
+
+      # Montar el script SQL en una carpeta MÁGICA de MySQL.
+      # Todo .sql/.sh en /docker-entrypoint-initdb.d/ se ejecuta SOLO
+      # cuando MySQL arranca con la BD vacía (primera vez).
+      # :ro = read-only, mayor seguridad
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+
+    # Healthcheck ESTRICTO: solo marca "healthy" cuando MySQL acepta
+    # queries reales con el usuario de la app Y la BD proyecto_db existe.
+    #
+    # ¿Por qué no usar "mysqladmin ping"?
+    #   El ping responde OK durante el arranque temporal de mysqld,
+    #   ANTES de que se ejecuten los scripts de /docker-entrypoint-initdb.d/.
+    #   El backend entonces intenta conectarse demasiado pronto y falla.
+    #
+    # Esta query falla mientras:
+    #   • El usuario app_user no está creado, O
+    #   • La base de datos proyecto_db no existe (init-db.sql no terminó)
+    # Solo cuando AMBAS cosas están listas, healthy pasa a true.
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h localhost -u ${MYSQL_USER:-app_user} -p${MYSQL_PASSWORD:-CAMBIAR_EN_LOCAL} -e 'USE proyecto_db; SELECT 1;' || exit 1"]
+      interval: 5s                    # Revisar cada 5s (más reactivo)
+      timeout: 5s                     # Tiempo máximo por chequeo
+      retries: 10                     # 10 fallos seguidos = "unhealthy"
+      start_period: 30s               # Grace period antes de contar fallos
+
+    networks:
+      - backend_network
+
+  # ──────────────────────────────────────────────────────────
+  # SERVICIO 2: Backend Node.js / Express
+  # ──────────────────────────────────────────────────────────
+  backend:
+    # Doble configuración (image + build) → funciona para local y para CI/CD:
+    #
+    # • LOCAL (docker compose up --build):
+    #     Compose ejecuta el "build:" y etiqueta la imagen con el nombre de "image:".
+    #
+    # • PRODUCCIÓN (docker compose pull && up):
+    #     Compose ignora "build:" y descarga la imagen desde Docker Hub.
+    image: ${DOCKERHUB_USERNAME:-local}/devops-backend:${IMAGE_TAG:-latest}
+    build:
+      context: .                      # Carpeta donde está el Dockerfile
+      dockerfile: Dockerfile
+
+    container_name: devops_backend
+    restart: unless-stopped
+
+    environment:
+      PORT: 3000
+
+      # ⚠️ DB_HOST es "database" (el NOMBRE DEL SERVICIO), no "localhost".
+      # Docker crea automáticamente un DNS interno: el contenedor "backend"
+      # puede resolver "database" como la IP del contenedor MySQL.
+      DB_HOST: database
+
+      DB_USER: ${MYSQL_USER:-app_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-CAMBIAR_EN_LOCAL}
+      DB_NAME: ${MYSQL_DATABASE:-proyecto_db}
+      DB_PORT: 3306
+
+    # Publicar puerto 3000 al host (Frontend se conectará a IP_BACKEND:3000)
+    ports:
+      - "3000:3000"
+
+    # Esperar a que MySQL esté HEALTHY antes de arrancar el backend.
+    # Sin esto, el backend intentaría conectarse antes de tiempo y crashearía.
+    depends_on:
+      database:
+        condition: service_healthy
+
+    networks:
+      - backend_network
+
+
+# ──────────────────────────────────────────────────────────
+# REDES — comunicación interna entre contenedores
+# ──────────────────────────────────────────────────────────
+# Una red bridge aísla estos contenedores del exterior.
+# Solo los contenedores conectados a "backend_network" se ven entre sí.
+networks:
+  backend_network:
+    driver: bridge
+
+
+# ──────────────────────────────────────────────────────────
+# VOLÚMENES — almacenamiento persistente
+# ──────────────────────────────────────────────────────────
+# Named volume "mysql_data":
+#   • Docker decide la ubicación física (/var/lib/docker/volumes/...)
+#   • Sobrevive a docker compose down (no se borra)
+#   • Solo se borra con docker volume rm <nombre>
+#
+# Por qué named volume y no bind mount:
+#   • Portable (funciona igual en tu PC, EC2, cualquier host)
+#   • Docker optimiza el rendimiento del filesystem
+#   • Práctica recomendada para bases de datos
+volumes:
+  mysql_data:
+    driver: local

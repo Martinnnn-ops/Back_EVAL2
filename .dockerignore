@@ -1,0 +1,56 @@
+# ============================================================
+# .dockerignore — archivos que Docker IGNORA al construir
+# ============================================================
+# Equivale al .gitignore pero solo para "docker build".
+# Hace la imagen más pequeña, segura y rápida de construir.
+# ============================================================
+
+# ─── Dependencias de Node ────────────────────────────────────
+# Se reinstalan dentro del contenedor con npm ci
+node_modules
+npm-debug.log*
+.npm
+
+# ─── Variables de entorno (¡secretos!) ──────────────────────
+# Nunca deben terminar dentro de la imagen
+.env
+.env.*
+# Excepción: el .env.example sí puede ir (es plantilla pública)
+!.env.example
+
+# ─── Control de versiones ───────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ─── Documentación (no se necesita en runtime) ──────────────
+*.md
+docs/
+
+# ─── Tests y cobertura (no se necesitan en producción) ──────
+tests/
+__tests__/
+coverage/
+.nyc_output
+
+# ─── Configuración de editor / IDE ──────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── Archivos del sistema operativo ─────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Logs locales ───────────────────────────────────────────
+*.log
+logs/
+
+# ─── Archivos Docker (auto-referencia innecesaria) ──────────
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# ─── CI/CD (no se necesita dentro del contenedor) ───────────
+.github/
