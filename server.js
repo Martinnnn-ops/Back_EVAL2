@@ -18,7 +18,9 @@ const dbConnection = mysql.createConnection({
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'proyecto_db',
-    port: process.env.DB_PORT || 3306
+    port: process.env.DB_PORT || 3306,
+    // utf8mb4 = soporte completo Unicode (tildes, ñ, emojis)
+    charset: 'utf8mb4'
 });
 
 // Conectar a la base de datos
