@@ -12,24 +12,33 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Configuración de la conexión a la base de datos MySQL
-const dbConnection = mysql.createConnection({
+// Pool de conexiones a MySQL.
+// Pool en vez de createConnection() porque:
+//   - reconecta solo cuando una conexion muere (ej: MySQL reinicio)
+//   - mantiene varias conexiones reusables para concurrencia
+//   - evita el error "Can't add new command when connection is in closed state"
+const dbConnection = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'proyecto_db',
     port: process.env.DB_PORT || 3306,
     // utf8mb4 = soporte completo Unicode (tildes, ñ, emojis)
-    charset: 'utf8mb4'
+    charset: 'utf8mb4',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-// Conectar a la base de datos
-dbConnection.connect((err) => {
+// Verificar al arranque que la BD acepta conexiones (no bloquea si falla,
+// el pool reintentara en cada query)
+dbConnection.getConnection((err, conn) => {
     if (err) {
-        console.error('Error conectando a la base de datos:', err);
+        console.error('Error inicial conectando a MySQL (el pool reintentara):', err.code);
         return;
     }
     console.log('Conectado exitosamente a la base de datos MySQL');
+    conn.release();
 });
 
 // Ruta de prueba para verificar que el servidor funciona
