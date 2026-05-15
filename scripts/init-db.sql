@@ -13,6 +13,13 @@
 -- ============================================================
 
 
+-- ─── 0. Forzar UTF-8 en la sesión que ejecuta este script ───
+-- Sin esto, el cliente del entrypoint usa latin1 y las tildes
+-- de este mismo archivo se guardan doblemente codificadas
+-- (ej: "Pérez" termina como "PÃ©rez" en la tabla).
+SET NAMES utf8mb4;
+
+
 -- ─── 1. Crear la base de datos ──────────────────────────────
 -- Aunque MySQL ya la crea con la variable MYSQL_DATABASE del compose,
 -- la dejamos aquí por seguridad (idempotente: IF NOT EXISTS)
