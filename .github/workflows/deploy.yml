@@ -1,0 +1,100 @@
+# ============================================================
+# CI/CD Backend — Build → Push → Deploy
+# ============================================================
+# Pipeline automatizado que se activa al hacer push a la rama "deploy":
+#   1. JOB build-and-push: construye la imagen Docker y la sube a Docker Hub
+#   2. JOB deploy-to-ec2:  se conecta por SSH a la EC2 Backend y la actualiza
+#
+# Secrets requeridos (ya configurados en GitHub Settings):
+#   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, EC2_SSH_KEY,
+#   EC2_BACKEND_HOST, MYSQL_DATABASE, MYSQL_USER,
+#   MYSQL_PASSWORD, MYSQL_ROOT_PASSWORD
+# ============================================================
+
+name: CI/CD Backend - Build, Push & Deploy
+
+# TRIGGER: solo se ejecuta cuando hay push a la rama "deploy"
+on:
+  push:
+    branches:
+      - deploy
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/devops-backend
+
+jobs:
+
+  # ────────────────────────────────────────────────────────
+  # JOB 1: Construir la imagen Docker y subirla a Docker Hub
+  # ────────────────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build y push de la imagen Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ────────────────────────────────────────────────────────
+  # JOB 2: Desplegar la nueva imagen en la EC2 Backend
+  # ────────────────────────────────────────────────────────
+  deploy-to-ec2:
+    name: Deploy a EC2 Backend
+    runs-on: ubuntu-latest
+    needs: build-and-push        # solo corre si el build anterior tuvo éxito
+
+    steps:
+      - name: Desplegar via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_BACKEND_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # Autenticación con Docker Hub desde la EC2
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
+              docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+            # Crear archivo .env con las variables que necesita docker-compose
+            cat > /home/ec2-user/.env << 'ENVEOF'
+            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            IMAGE_TAG=latest
+            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+            MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+            MYSQL_USER=${{ secrets.MYSQL_USER }}
+            MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+            ENVEOF
+
+            # Descargar la nueva imagen y recrear el contenedor
+            cd /home/ec2-user
+            docker compose --env-file .env pull
+            docker compose --env-file .env up -d --force-recreate
+
+            # Limpiar imágenes antiguas para no llenar el disco
+            docker image prune -f
+
+            # Mostrar el estado final
+            docker compose ps
+
+            echo "Deploy Backend completado: $(date)"
