@@ -86,10 +86,13 @@ jobs:
             MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
             ENVEOF
 
-            # Descargar la nueva imagen y recrear el contenedor
+            # Descargar la nueva imagen y recrear SOLO el backend.
+            # Recreamos solo el servicio backend (no MySQL) para evitar
+            # downtime de la BD y conflictos de credenciales con el volumen
+            # mysql_data ya inicializado.
             cd /home/ec2-user
-            docker compose --env-file .env pull
-            docker compose --env-file .env up -d --force-recreate
+            docker compose --env-file .env pull backend
+            docker compose --env-file .env up -d --force-recreate backend
 
             # Limpiar imágenes antiguas para no llenar el disco
             docker image prune -f
