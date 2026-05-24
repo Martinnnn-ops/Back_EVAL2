@@ -60,7 +60,7 @@ app.get('/api/usuarios', (req, res) => {
             res.status(500).json({ error: 'Error al obtener usuarios' });
             return;
         }
-        res.json(results);
+        res.json(results.map(u => ({ ...u, nombre: u.nombre + ' (' + u.edad + ' años)' })));
     });
 });
 
